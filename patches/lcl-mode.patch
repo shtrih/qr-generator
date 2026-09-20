@@ -1,0 +1,14 @@
+diff --git a/QRCodeGenLib/src/Include/QRCodeGenLibFPC.inc b/QRCodeGenLib/src/Include/QRCodeGenLibFPC.inc
+index 770ca22..b617b30 100644
+--- a/QRCodeGenLib/src/Include/QRCodeGenLibFPC.inc
++++ b/QRCodeGenLib/src/Include/QRCodeGenLibFPC.inc
+@@ -22,7 +22,8 @@
+ 
+ {========================= Framework Selection ================================}
+ 
+-{$DEFINE Framework_FCL} // enable to force FCL mode
++// patched for qr-generator: LCL mode (TColor/TBitmap) instead of forced FCL mode
++{.$DEFINE Framework_FCL} // enable to force FCL mode
+ {$IFDEF Framework_FCL}
+    {$UNDEF LCL}
+    {$DEFINE FCL}

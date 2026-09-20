@@ -1,0 +1,97 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# FPC and Lazarus are installed by .github/workflows/install-fpc-lazarus.sh —
+# a verbatim copy of the vendored QRCodeGenLib4Pascal installer. Versions are
+# pinned to match the local dev toolchain (Lazarus 4.6 / FPC 3.2.2).
+env:
+  FPC_VERSION: '3.2.2'
+  LAZARUS_BRANCH: lazarus_4_6
+  LAZARUS_REPO: https://github.com/fpc/Lazarus.git
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x86_64
+            runner: windows-latest
+            fpc_target: x86_64-win64
+            artifact: qr-generator-win-x64
+            binary: qr_generator.exe
+          - name: Linux x86_64
+            runner: ubuntu-latest
+            fpc_target: x86_64-linux
+            artifact: qr-generator-linux-x64
+            binary: qr_generator
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # LCL links against GTK2 on Linux; the runner image ships no GTK2 dev files.
+      - name: Install GTK2 development libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk2.0-dev
+
+      - name: Install FPC + Lazarus
+        shell: bash
+        env:
+          FPC_TARGET: ${{ matrix.fpc_target }}
+        run: bash .github/workflows/install-fpc-lazarus.sh
+
+      - name: Build (Release)
+        shell: bash
+        run: lazbuild --build-mode=Release qr_generator.lpi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.binary }}
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      # gh needs a git repository (or an explicit GH_REPO) to resolve the
+      # target repository — without checkout it fails with
+      # "fatal: not a git repository".
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Package archives
+        run: |
+          mkdir release
+          (cd dist && zip -q ../release/qr-generator-win-x64.zip qr_generator.exe)
+          (cd dist && tar czf ../release/qr-generator-linux-x64.tar.gz qr_generator)
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes release/*
