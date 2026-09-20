@@ -1,7 +1,9 @@
 # QR Code Generator
 
 A small graphical application for generating QR codes, written in Free Pascal
-(Lazarus / LCL). Type or paste text, get a live QR preview, and download the
+(Lazarus / LCL). A port of [Fast-QR-Code-generator](https://www.nayuki.io/page/fast-qr-code-generator-library)
+by [Nayuki](https://www.nayuki.io/).
+Type or paste text, get a live QR preview, and download the
 result as PNG, BMP or SVG. Colors, size and error-correction options are
 configurable in the UI.
 
