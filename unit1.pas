@@ -6,14 +6,10 @@ interface
 
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, StdCtrls, ExtCtrls,
-  Spin, Math, QlpIQrCode, QlpIQrSegment, QlpQrCode, QlpQrSegment,
+  Spin, Math, CaptionFont, QlpIQrCode, QlpIQrSegment, QlpQrCode, QlpQrSegment,
   QlpQrSegmentMode, QlpQRCodeGenLibTypes;
 
 type
-
-  { Caption line list returned by TForm1.WrapCaptionLines }
-
-  TCaptionLines = array of String;
 
   { TForm1 }
 
@@ -72,8 +68,16 @@ type
     procedure TextHintClick(Sender: TObject);
     function SelectedEcc: TQrCode.TEcc;
     function BoostedEcc(AVersion: Int32): TQrCode.TEcc;
-    function WrapCaptionLines(ACanvas: TCanvas; const AText: String;
-      AMaxWidth, AMaxLines: Integer): TCaptionLines;
+    function CaptionLineWidthPix(ACanvas: TCanvas;
+      const ALine: TCodePointArray; APx: Integer): Integer;
+    procedure EllipsizeLine(var ALine: TCodePointArray; ACanvas: TCanvas;
+      AMaxWidthPx, APx: Integer);
+    function WrapCaptionLine(ACanvas: TCanvas; const ACodePoints: TCodePointArray;
+      AMaxWidthPx, APx, AMaxLines: Integer): TCaptionLines;
+    procedure BuildCaptionLines(ACanvas: TCanvas; ALines: TStrings;
+      AMaxWidthPx, APx, AMaxLines: Integer; out AResult: TCaptionLines);
+    procedure DrawCaptionLine(ACanvas: TCanvas; const ALine: TCodePointArray;
+      AX, AY, APx: Integer);
     procedure ComposeCaption(ASource, ADest: TBitmap);
     procedure UpdateQrCode;
     procedure ShowError(const AMessage: String);
@@ -177,156 +181,322 @@ begin
   end;
 end;
 
-function TForm1.WrapCaptionLines(ACanvas: TCanvas; const AText: String;
-  AMaxWidth, AMaxLines: Integer): TCaptionLines;
+function TForm1.CaptionLineWidthPix(ACanvas: TCanvas;
+  const ALine: TCodePointArray; APx: Integer): Integer;
 
-  // removes the last UTF-8 character (dropping the last byte alone could
-  // cut a multi-byte sequence in half and leave an invalid string)
-  procedure DeleteLastChar(var S: String);
+  // width contributed by one run: pixel glyphs carry their own trailing
+  // gap column, TrueType runs get a matching synthetic gap appended
+  function RunWidth(AFrom, ATo: Integer; AKnown: Boolean): Integer;
+  var
+    J: Integer;
+    S: String;
   begin
-    if S = '' then
-      Exit;
-    Delete(S, Length(S), 1);
-    while (S <> '') and ((Byte(S[Length(S)]) and $C0) = $80) do
-      Delete(S, Length(S), 1);
+    if AKnown then
+      Result := (ATo - AFrom) * CAPTION_GLYPH_ADVANCE * APx
+    else
+    begin
+      S := '';
+      for J := AFrom to ATo - 1 do
+        S := S + CaptionCodePointToUtf8(ALine[J]);
+      Result := ACanvas.TextWidth(S) + APx;
+    end;
   end;
 
 var
-  LWords: TCaptionLines;
-  LWordCount, I: Integer;
-  LWord, LLine, LTest: String;
+  I, LRunStart: Integer;
+  LKnown: Boolean;
+begin
+  Result := 0;
+  I := 0;
+  while I < Length(ALine) do
+  begin
+    LKnown := CaptionGlyphIndex(ALine[I]) >= 0;
+    LRunStart := I;
+    while (I < Length(ALine)) and
+          ((CaptionGlyphIndex(ALine[I]) >= 0) = LKnown) do
+      Inc(I);
+    Inc(Result, RunWidth(LRunStart, I, LKnown));
+  end;
+  if Result > 0 then
+    Dec(Result, APx); // the trailing gap of the last glyph is not drawn
+end;
+
+procedure TForm1.EllipsizeLine(var ALine: TCodePointArray; ACanvas: TCanvas;
+  AMaxWidthPx, APx: Integer);
+begin
+  if (Length(ALine) > 0) and (ALine[High(ALine)] = $2026) then
+    Exit;
+  SetLength(ALine, Length(ALine) + 1);
+  ALine[High(ALine)] := $2026;
+  // drop characters in front of the ellipsis until the line fits
+  while (Length(ALine) > 1) and
+        (CaptionLineWidthPix(ACanvas, ALine, APx) > AMaxWidthPx) do
+  begin
+    ALine[High(ALine) - 1] := ALine[High(ALine)];
+    SetLength(ALine, Length(ALine) - 1);
+  end;
+end;
+
+function TForm1.WrapCaptionLine(ACanvas: TCanvas;
+  const ACodePoints: TCodePointArray; AMaxWidthPx, APx,
+  AMaxLines: Integer): TCaptionLines;
+
+  procedure AppendCp(var ADst: TCodePointArray; ACh: Cardinal);
+  begin
+    SetLength(ADst, Length(ADst) + 1);
+    ADst[High(ADst)] := ACh;
+  end;
+
+  procedure AppendRange(var ADst: TCodePointArray; const ASrc: TCodePointArray);
+  var
+    LOld: Integer;
+  begin
+    LOld := Length(ADst);
+    SetLength(ADst, LOld + Length(ASrc));
+    if Length(ASrc) > 0 then
+      Move(ASrc[0], ADst[LOld], Length(ASrc) * SizeOf(Cardinal));
+  end;
+
+var
+  LWords: array of TCodePointArray;
+  LWordCount, LLineCount, LLen, I: Integer;
+  LWord, LRest, LLine, LCand: TCodePointArray;
 begin
   Result := nil;
   LWords := nil;
 
-  // split the (already flattened) text into space-separated words
+  // split into words on spaces (word = maximal run of non-space code points)
   LWordCount := 0;
-  LWord := '';
-  for I := 1 to Length(AText) do
-    if AText[I] <> ' ' then
-      LWord := LWord + AText[I]
-    else if LWord <> '' then
-    begin
-      Inc(LWordCount);
-      SetLength(LWords, LWordCount);
-      LWords[LWordCount - 1] := LWord;
-      LWord := '';
-    end;
-  if LWord <> '' then
+  I := 0;
+  while I < Length(ACodePoints) do
   begin
+    if ACodePoints[I] = $20 then
+    begin
+      Inc(I);
+      Continue;
+    end;
+    LLen := 0;
+    while (I + LLen < Length(ACodePoints)) and (ACodePoints[I + LLen] <> $20) do
+      Inc(LLen);
     Inc(LWordCount);
     SetLength(LWords, LWordCount);
-    LWords[LWordCount - 1] := LWord;
+    LWords[LWordCount - 1] := Copy(ACodePoints, I, LLen);
+    Inc(I, LLen);
   end;
   if LWordCount = 0 then
     Exit;
 
-  // greedy wrap; the last allowed line is finished off with an ellipsis
-  LLine := '';
+  // greedy wrap on pixel widths; the last allowed line is finished off
+  // with an ellipsis
+  LLineCount := 0;
+  LLine := nil;
   I := 0;
   while I < LWordCount do
   begin
-    if LLine = '' then
-      LTest := LWords[I]
-    else
-      LTest := LLine + ' ' + LWords[I];
-    if ACanvas.TextWidth(LTest) <= AMaxWidth then
+    LWord := LWords[I];
+    LCand := nil;
+    AppendRange(LCand, LLine);
+    if Length(LLine) > 0 then
+      AppendCp(LCand, $20);
+    AppendRange(LCand, LWord);
+    if CaptionLineWidthPix(ACanvas, LCand, APx) <= AMaxWidthPx then
     begin
-      LLine := LTest;
+      LLine := LCand;
       Inc(I);
       Continue;
     end;
-    if LLine <> '' then
+    if Length(LLine) > 0 then
     begin
-      // flushing would consume the last available line: ellipsize it
-      if Length(Result) = AMaxLines - 1 then
+      // this line would fill the last available slot: ellipsize it
+      if LLineCount = AMaxLines - 1 then
       begin
-        while (LLine <> '') and
-          (ACanvas.TextWidth(LLine + '…') > AMaxWidth) do
-          DeleteLastChar(LLine);
-        SetLength(Result, Length(Result) + 1);
-        Result[High(Result)] := LLine + '…';
+        EllipsizeLine(LLine, ACanvas, AMaxWidthPx, APx);
+        SetLength(Result, LLineCount + 1);
+        Result[LLineCount] := LLine;
         Exit;
       end;
-      SetLength(Result, Length(Result) + 1);
-      Result[High(Result)] := LLine;
-      LLine := '';
+      SetLength(Result, LLineCount + 1);
+      Result[LLineCount] := LLine;
+      Inc(LLineCount);
+      LLine := nil;
       Continue;
     end;
-    // a single word wider than a whole line: break it by characters
-    if Length(Result) = AMaxLines - 1 then
+    // a single word longer than a whole line: break it by characters
+    if LLineCount = AMaxLines - 1 then
     begin
-      while (LWords[I] <> '') and
-        (ACanvas.TextWidth(LWords[I] + '…') > AMaxWidth) do
-        DeleteLastChar(LWords[I]);
-      SetLength(Result, Length(Result) + 1);
-      Result[High(Result)] := LWords[I] + '…';
+      LLine := Copy(LWord, 0, Length(LWord));
+      EllipsizeLine(LLine, ACanvas, AMaxWidthPx, APx);
+      SetLength(Result, LLineCount + 1);
+      Result[LLineCount] := LLine;
       Exit;
     end;
-    LWord := LWords[I];
-    while (LWord <> '') and (ACanvas.TextWidth(LWord) > AMaxWidth) do
-      DeleteLastChar(LWord);
-    SetLength(Result, Length(Result) + 1);
-    Result[High(Result)] := LWord;
-    LWords[I] := Copy(LWords[I], Length(LWord) + 1, MaxInt);
+    // find the largest prefix of the word that fits a whole line
+    LLen := Length(LWord);
+    while LLen > 1 do
+    begin
+      LCand := Copy(LWord, 0, LLen);
+      if CaptionLineWidthPix(ACanvas, LCand, APx) <= AMaxWidthPx then
+        Break;
+      Dec(LLen);
+    end;
+    SetLength(Result, LLineCount + 1);
+    Result[LLineCount] := Copy(LWord, 0, LLen);
+    Inc(LLineCount);
     // the remainder of the word is reprocessed on the next iteration
+    LRest := Copy(LWord, LLen, Length(LWord) - LLen);
+    LWords[I] := LRest;
   end;
-  if LLine <> '' then
+  if Length(LLine) > 0 then
   begin
-    SetLength(Result, Length(Result) + 1);
-    Result[High(Result)] := LLine;
+    SetLength(Result, LLineCount + 1);
+    Result[LLineCount] := LLine;
+  end;
+end;
+
+procedure TForm1.BuildCaptionLines(ACanvas: TCanvas; ALines: TStrings;
+  AMaxWidthPx, APx, AMaxLines: Integer; out AResult: TCaptionLines);
+var
+  I, J, LFirst, LLast: Integer;
+  LCp: TCodePointArray;
+  LPart: TCaptionLines;
+begin
+  AResult := nil;
+
+  // skip empty lines at both ends of the text
+  LFirst := 0;
+  LLast := ALines.Count - 1;
+  while (LFirst <= LLast) and (Trim(ALines[LFirst]) = '') do
+    Inc(LFirst);
+  while (LLast >= LFirst) and (Trim(ALines[LLast]) = '') do
+    Dec(LLast);
+
+  for I := LFirst to LLast do
+  begin
+    if Length(AResult) = AMaxLines then
+    begin
+      // more source lines than the caption can hold: mark the cut
+      EllipsizeLine(AResult[High(AResult)], ACanvas, AMaxWidthPx, APx);
+      Break;
+    end;
+    LCp := Utf8ToCodePoints(Trim(ALines[I]));
+    if Length(LCp) = 0 then
+    begin
+      // explicit blank line inside the text: keep it as a spacer
+      SetLength(AResult, Length(AResult) + 1);
+      Continue;
+    end;
+    LPart := WrapCaptionLine(ACanvas, LCp, AMaxWidthPx, APx,
+      AMaxLines - Length(AResult));
+    for J := 0 to High(LPart) do
+    begin
+      SetLength(AResult, Length(AResult) + 1);
+      AResult[High(AResult)] := LPart[J];
+    end;
+  end;
+end;
+
+procedure TForm1.DrawCaptionLine(ACanvas: TCanvas;
+  const ALine: TCodePointArray; AX, AY, APx: Integer);
+var
+  I, J, K, LRunStart, LX, LIdx: Integer;
+  LKnown: Boolean;
+  LText: String;
+begin
+  LX := AX;
+  I := 0;
+  while I < Length(ALine) do
+  begin
+    LKnown := CaptionGlyphIndex(ALine[I]) >= 0;
+    LRunStart := I;
+    while (I < Length(ALine)) and
+          ((CaptionGlyphIndex(ALine[I]) >= 0) = LKnown) do
+      Inc(I);
+    if LKnown then
+    begin
+      // embedded pixel glyphs
+      for LIdx := LRunStart to I - 1 do
+      begin
+        for J := 0 to CAPTION_GLYPH_ROWS - 1 do
+          for K := 0 to CAPTION_GLYPH_COLS - 1 do
+            if (CaptionGlyphs[CaptionGlyphIndex(ALine[LIdx])][J] and
+                (1 shl K)) <> 0 then
+              ACanvas.FillRect(LX + K * APx, AY + J * APx,
+                LX + (K + 1) * APx, AY + (J + 1) * APx);
+        Inc(LX, CAPTION_GLYPH_ADVANCE * APx);
+      end;
+    end
+    else
+    begin
+      // TrueType fallback: the system font renders the glyphs the pixel
+      // font does not have (font linking / Pango covers CJK and friends)
+      LText := '';
+      for LIdx := LRunStart to I - 1 do
+        LText := LText + CaptionCodePointToUtf8(ALine[LIdx]);
+      ACanvas.Brush.Style := bsClear;
+      ACanvas.TextOut(LX, AY, LText);
+      Inc(LX, ACanvas.TextWidth(LText) + APx);
+      ACanvas.Brush.Style := bsSolid;
+    end;
   end;
 end;
 
 procedure TForm1.ComposeCaption(ASource, ADest: TBitmap);
 const
-  // caption font height in bitmap pixels: grows with the scale, capped
-  cCaptionFontMinPx = 8;
-  cCaptionFontMaxPx = 48;
   cCaptionMaxLines = 3;
 var
-  LFontH, LPad, LLineH, LBandH, LMaxTextW, I, LY: Integer;
-  LText: String;
-  LLines: TCaptionLines;
+  LSrcLines: TStringList;
+  LFontPx, LFontH, LPad, LLineH, LBandH, LMaxTextW, I, LX, LY: Integer;
+  LCaption: TCaptionLines;
 begin
-  // flatten the encoded text into a single line for the caption
-  LText := StringReplace(memText.Text, #13#10, ' ', [rfReplaceAll]);
-  LText := StringReplace(LText, #10, ' ', [rfReplaceAll]);
-  LText := StringReplace(LText, #13, ' ', [rfReplaceAll]);
-  LText := Trim(LText);
+  LSrcLines := TStringList.Create;
+  try
+    // the memo text keeps the line breaks the user typed; the caption
+    // shows them as real line breaks too
+    LSrcLines.Text := memText.Text;
 
-  LFontH := Min(Max(seScale.Value * 2, cCaptionFontMinPx), cCaptionFontMaxPx);
-  LPad := Max(4, seScale.Value div 2);
-  LMaxTextW := ASource.Width - 2 * LPad;
-  if LMaxTextW < 8 then
-    LMaxTextW := 8;
+    // pixel size of the embedded font: grows with the scale, capped
+    LFontPx := Max(1, Min(seScale.Value div 4, 5));
+    LPad := Max(4, seScale.Value div 2);
+    LMaxTextW := ASource.Width - 2 * LPad;
+    if LMaxTextW < CAPTION_GLYPH_ADVANCE * LFontPx then
+      LMaxTextW := CAPTION_GLYPH_ADVANCE * LFontPx;
 
-  ASource.Canvas.Font.Height := -LFontH;
-  LLines := WrapCaptionLines(ASource.Canvas, LText, LMaxTextW,
-    cCaptionMaxLines);
-  if Length(LLines) = 0 then
-  begin
-    ADest.Assign(ASource);
-    Exit;
-  end;
+    // TrueType fallback runs are measured and drawn at the caption line
+    // height so their baselines stay close to the pixel glyphs
+    LFontH := (CAPTION_GLYPH_ROWS + 1) * LFontPx;
+    ASource.Canvas.Font.Height := -LFontH;
 
-  LLineH := LFontH * 5 div 4;
-  LBandH := 2 * LPad + Length(LLines) * LLineH;
+    BuildCaptionLines(ASource.Canvas, LSrcLines, LMaxTextW, LFontPx,
+      cCaptionMaxLines, LCaption);
+    if Length(LCaption) = 0 then
+    begin
+      ADest.Assign(ASource);
+      Exit;
+    end;
 
-  ADest.SetSize(ASource.Width, ASource.Height + LBandH);
-  ADest.Canvas.Brush.Color := cbLight.ButtonColor;
-  ADest.Canvas.FillRect(0, 0, ADest.Width, ADest.Height);
-  ADest.Canvas.Draw(0, 0, ASource);
+    LLineH := (CAPTION_GLYPH_ROWS + 1) * LFontPx;
+    LBandH := 2 * LPad + Length(LCaption) * LLineH;
 
-  ADest.Canvas.Font.Height := -LFontH;
-  ADest.Canvas.Font.Color := cbDark.ButtonColor;
-  ADest.Canvas.Brush.Style := bsClear;
-  LY := ASource.Height + LPad + (LLineH - LFontH) div 2;
-  for I := 0 to High(LLines) do
-  begin
-    ADest.Canvas.TextOut(
-      (ADest.Width - ADest.Canvas.TextWidth(LLines[I])) div 2, LY, LLines[I]);
-    Inc(LY, LLineH);
+    ADest.SetSize(ASource.Width, ASource.Height + LBandH);
+    ADest.Canvas.Brush.Color := cbLight.ButtonColor;
+    ADest.Canvas.FillRect(0, 0, ADest.Width, ADest.Height);
+    ADest.Canvas.Draw(0, 0, ASource);
+
+    ADest.Canvas.Font.Height := -LFontH;
+    ADest.Canvas.Font.Color := cbDark.ButtonColor;
+    ADest.Canvas.Brush.Color := cbDark.ButtonColor;
+    ADest.Canvas.Brush.Style := bsSolid;
+    LY := ASource.Height + LPad;
+    for I := 0 to High(LCaption) do
+    begin
+      LX := (ADest.Width -
+        CaptionLineWidthPix(ASource.Canvas, LCaption[I], LFontPx)) div 2;
+      DrawCaptionLine(ADest.Canvas, LCaption[I], LX, LY, LFontPx);
+      Inc(LY, LLineH);
+    end;
+    ADest.Canvas.Brush.Style := bsClear;
+  finally
+    LSrcLines.Free;
   end;
 end;
 
