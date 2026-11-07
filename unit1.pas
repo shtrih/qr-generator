@@ -600,7 +600,7 @@ begin
       DefaultExt := 'png';
       Filter := 'PNG image (*.png)|*.png|Windows bitmap (*.bmp)|*.bmp';
     end;
-    FileName := 'qr-code';
+    FileName := 'qr-code_' + FormatDateTime('yyyy-mm-dd_hh-nn-ss', Now);
     Options := Options + [ofOverwritePrompt];
     if not Execute then
       Exit;
