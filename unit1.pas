@@ -6,8 +6,8 @@ interface
 
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, StdCtrls, ExtCtrls,
-  Spin, Math, CaptionFont, QlpIQrCode, QlpIQrSegment, QlpQrCode, QlpQrSegment,
-  QlpQrSegmentMode, QlpQRCodeGenLibTypes;
+  Spin, Math, Types, CaptionFont, QlpIQrCode, QlpIQrSegment, QlpQrCode,
+  QlpQrSegment, QlpQrSegmentMode, QlpQRCodeGenLibTypes;
 
 type
 
@@ -64,12 +64,22 @@ type
   private
     FQRCode: IQrCode;
     FSegments: array of IQrSegment;
+    FDragStart: TPoint;
+    FDragArmed: Boolean;
     procedure ControlChanged(Sender: TObject);
     procedure DownloadClick(Sender: TObject);
     procedure TextHintClick(Sender: TObject);
     procedure DecodeClick(Sender: TObject);
     procedure ShowDecodeDialog(const AFileName: String = '');
     procedure FormDropFiles(Sender: TObject; const FileNames: array of string);
+    procedure PreviewMouseDown(Sender: TObject; Button: TMouseButton;
+      Shift: TShiftState; X, Y: Integer);
+    procedure PreviewMouseMove(Sender: TObject; Shift: TShiftState;
+      X, Y: Integer);
+    procedure PreviewMouseUp(Sender: TObject; Button: TMouseButton;
+      Shift: TShiftState; X, Y: Integer);
+    procedure BeginPreviewDrag;
+    function TempDragFileName: String;
     function SelectedEcc: TQrCode.TEcc;
     function BoostedEcc(AVersion: Int32): TQrCode.TEcc;
     function CaptionLineWidthPix(ACanvas: TCanvas;
@@ -96,7 +106,7 @@ implementation
 {$R *.lfm}
 
 uses
-  DecodeForm;
+  DecodeForm, LCLType, LCLIntf, LazFileUtils, ShellDrag;
 
 function EccLetter(AEcc: TQrCode.TEcc): String;
 begin
@@ -142,6 +152,9 @@ begin
   lblTextHint.OnClick := @TextHintClick;
   btnDecode.OnClick := @DecodeClick;
   OnDropFiles := @FormDropFiles;
+  imgPreview.OnMouseDown := @PreviewMouseDown;
+  imgPreview.OnMouseMove := @PreviewMouseMove;
+  imgPreview.OnMouseUp := @PreviewMouseUp;
   UpdateQrCode;
 end;
 
@@ -668,6 +681,99 @@ begin
   if (not Enabled) or (Length(FileNames) = 0) then
     Exit;
   ShowDecodeDialog(FileNames[0]);
+end;
+
+procedure TForm1.PreviewMouseDown(Sender: TObject; Button: TMouseButton;
+  Shift: TShiftState; X, Y: Integer);
+begin
+  if Button = mbLeft then
+  begin
+    FDragStart := Point(X, Y);
+    FDragArmed := True;
+  end;
+end;
+
+procedure TForm1.PreviewMouseMove(Sender: TObject; Shift: TShiftState;
+  X, Y: Integer);
+var
+  LThreshold: Integer;
+begin
+  if not FDragArmed then
+    Exit;
+  FDragArmed := ssLeft in Shift;
+  if not FDragArmed then
+    Exit;
+  LThreshold := Max(LCLIntf.GetSystemMetrics(SM_CXDRAG),
+    LCLIntf.GetSystemMetrics(SM_CYDRAG));
+  if (Abs(X - FDragStart.X) > LThreshold) or
+     (Abs(Y - FDragStart.Y) > LThreshold) then
+  begin
+    FDragArmed := False;
+    BeginPreviewDrag;
+  end;
+end;
+
+procedure TForm1.PreviewMouseUp(Sender: TObject; Button: TMouseButton;
+  Shift: TShiftState; X, Y: Integer);
+begin
+  FDragArmed := False;
+end;
+
+procedure TForm1.BeginPreviewDrag;
+var
+  LTempFile: String;
+  LSaved: Boolean;
+  LPNG: TPortableNetworkGraphic;
+begin
+  if (FQRCode = nil) or imgPreview.Picture.Bitmap.Empty then
+    Exit;
+  LTempFile := TempDragFileName;
+  if LTempFile = '' then
+    Exit;
+  try
+    if rbVector.Checked then
+      LSaved := FQRCode.ToSvgFile(seBorder.Value, LTempFile)
+    else
+    begin
+      LPNG := TPortableNetworkGraphic.Create;
+      try
+        LPNG.Assign(imgPreview.Picture.Bitmap);
+        LPNG.SaveToFile(LTempFile);
+        LSaved := True;
+      finally
+        LPNG.Free;
+      end;
+    end;
+    // blocks until the drop finishes; the drop target copies the file
+    // itself, so the temporary file can be removed right away
+    if LSaved then
+      DragFileToShell(LTempFile);
+  finally
+    DeleteFileUTF8(LTempFile);
+  end;
+end;
+
+function TForm1.TempDragFileName: String;
+var
+  LDir, LBase, LExt: String;
+  I: Integer;
+begin
+  LDir := ShellTempDir;
+  if LDir = '' then
+    Exit(''); // no temporary directory available
+  if rbVector.Checked then
+    LExt := '.svg'
+  else
+    LExt := '.png';
+  LBase := LDir + 'qr-code_' + FormatDateTime('yyyy-mm-dd_hh-nn-ss', Now);
+  Result := LBase + LExt;
+  // a second drag started within the same second gets a numbered name
+  I := 2;
+  while FileExistsUTF8(Result) and (I < 100) do
+  begin
+    Result := LBase + '_' + IntToStr(I) + LExt;
+    Inc(I);
+  end;
 end;
 
 end.

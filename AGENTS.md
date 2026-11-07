@@ -11,6 +11,7 @@ The user communicates in Russian, but the project is maintained in English: writ
 - `qr_generator.lpr` — main program file (creates `TForm1`, runs the application).
 - `unit1.pas` / `unit1.lfm` — the main form `TForm1`: the whole UI (text input, QR preview with download link, options, statistics) and the generation logic (`TForm1.UpdateQrCode`).
 - `decodeform.pas` / `decodeform.lfm` — the modal "Decode QR Code" dialog `TDecodeForm`: loads an image (file dialog, drag & drop or clipboard) and decodes the QR code in it with the ZXing port; "Copy to Clipboard" / "Use in Generator" buttons.
+- `shelldrag.pas` — OLE drag-out helper for "drag the QR preview into Explorer"; see "Drag-out to Explorer" below. All of its code is `{$IFDEF WINDOWS}`; on other platforms both functions are no-op stubs so the cross-platform builds compile unchanged.
 - `qr_generator.lpi` — Lazarus project XML (packages, search paths, compiler options).
 - `qr_generator.lps` — IDE session file (open files order etc.; do not touch).
 - `qr_generator.ico` / `qr_generator.res` — application icon and compiled resource (`{$R *.res}` in the lpr).
@@ -77,12 +78,24 @@ Key API facts (verified against the sources and by a generate→decode round-tri
 - Passing `THints = nil` is fine when no hints are needed.
 - The units compile in `{$mode delphi}`; calling them from `{$mode objfpc}` code (`decodeform.pas`) works as usual.
 
+## Drag-out to Explorer
+
+Dragging the QR preview out to Explorer (or a browser etc.) is implemented in `shelldrag.pas` + the `imgPreview` mouse handlers in `unit1.pas` (`PreviewMouseDown/Move/Up` wired in `FormCreate`). The format follows the output format radio: Bitmap → `.png` (the preview bitmap, caption included), Vector → `.svg` (`ToSvgFile`, same as the download).
+
+How it works (all verified):
+- On a left-button drag past `GetSystemMetrics(SM_CXDRAG/SM_CYDRAG)` the app writes the current QR to a uniquely named file in the temp dir (`qr-code_<yyyy-mm-dd_hh-nn-ss>[__N].png/svg`, same naming as the download), then calls `ShellDrag.DragFileToShell`.
+- `DragFileToShell` builds an `HGLOBAL` with a `DROPFILES` header + the wide path, wraps it in a minimal `IDataObject` (single `CF_HDROP` format, with an `IEnumFORMATETC`) and calls `ActiveX.DoDragDrop` with a hand-rolled `IDropSource`. FPC ships the OLE interfaces (`ActiveX`, `ShlObj`) but **no** concrete `IDataObject` implementation, so it is written from scratch in `shelldrag.pas`.
+- `DoDragDrop` is **synchronous**: it returns after the drop target has finished copying the file (or after Esc/leave), so the caller deletes the temp file in a `finally` right away.
+- OLE is already initialized for the whole app: `OleInitialize(nil)` runs unconditionally in `TWin32WidgetSet.AppInit` (`lcl/interfaces/win32/win32object.inc`).
+- `ShellTempDir` returns the temp dir via `GetTempPathW` converted to UTF-8 (see the encoding gotcha below — `SysUtils.GetTempDir` returns OEM bytes and is not usable here).
+
 ## Rules and gotchas
 
 - **`.pas` / `.lfm` pairing**: the lpr sets `RequireDerivedFormResource:=True`, so the published fields of the form class in `.pas` must exactly match the objects in `.lfm`. When adding or removing components, edit both files consistently.
 - `.lpi` is plain XML: text edits are fine, but preserve Lazarus's existing formatting and indentation.
 - `.lps` is an IDE session file regenerated automatically; do not use it to infer project structure.
 - Compiler mode `{$mode objfpc}{$H+}` (in every unit), strings are UTF-8.
+- **Encoding gotcha (verified experimentally)**: the project compiles **without** `-FcUTF8`, so `String` literals hold UTF-8 *bytes* but are marked code page 0 (CP_ACP), and FPC's automatic code-page-aware conversions go through the **system ANSI code page** — `UnicodeString(s)` casts and RTL functions taking a UnicodeString overload (e.g. `SysUtils.DeleteFile`) corrupt any non-ASCII path. Verified safe: `TFileStream.Create(String)` / everything built on it (LCL `SaveToFile`, the library's `ToSvgFile`) and the LCL itself are byte-level UTF-8. Rules: convert with `LazUTF8.UTF8ToUTF16`/`UTF16ToUTF8` (byte-wise), never `UnicodeString()` casts; delete/check paths with `LazFileUtils.DeleteFileUTF8`/`FileExistsUTF8`, not `DeleteFile`/`FileExists`; when returning UTF-8 bytes from a helper, relabel with `SetCodePage(s, 0, False)` so assignments do not re-convert.
 - Hi-DPI is enabled: `Application.Scaled:=True`, `Scaled=True` in the `.lpi`, `DesignTimePPI=144` on the form. Keep the form scalable when editing its layout (avoid hard pixel sizes where adaptivity matters).
 - Drag & drop of image files onto the two forms uses the LCL's `TCustomForm.AllowDropFiles` (set in both `.lfm` files) and the forms' `OnDropFiles` event. The win32 interface intercepts `WM_DROPFILES` itself (parses the files, calls `DragFinish`, delivers `OnDropFiles`) — a `message WM_DROPFILES` handler never fires unless the interface is built with `EnableWMDropFiles`, so do not hand-roll ShellAPI drop handling here.
 - The `GolandProjects` folder is just a disk location; the project has nothing to do with Go.
