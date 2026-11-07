@@ -1,0 +1,122 @@
+object DecodeForm: TDecodeForm
+  Left = 300
+  Height = 400
+  Top = 200
+  Width = 560
+  AllowDropFiles = True
+  BorderStyle = bsDialog
+  Caption = 'Decode QR Code'
+  ClientHeight = 360
+  ClientWidth = 544
+  KeyPreview = True
+  LCLVersion = '4.6.0.0'
+  Position = poWorkAreaCenter
+  OnCreate = FormCreate
+  object btnOpen: TButton
+    Left = 11
+    Height = 28
+    Top = 11
+    Width = 120
+    Caption = 'Open image…'
+    TabOrder = 0
+  end
+  object btnPaste: TButton
+    Left = 139
+    Height = 28
+    Top = 11
+    Width = 150
+    Caption = 'Paste from clipboard'
+    TabOrder = 1
+  end
+  object lblFileName: TLabel
+    Left = 297
+    Height = 15
+    Top = 19
+    Width = 236
+    Alignment = taRightJustify
+    Anchors = [akTop, akLeft, akRight]
+    AutoSize = False
+    ShowHint = True
+    ParentShowHint = False
+    Transparent = False
+  end
+  object lblImage: TLabel
+    Left = 11
+    Height = 15
+    Top = 52
+    Width = 39
+    Caption = 'Image:'
+    Font.Style = [fsBold]
+    ParentFont = False
+  end
+  object lblDecoded: TLabel
+    Left = 227
+    Height = 15
+    Top = 52
+    Width = 88
+    Caption = 'Decoded text:'
+    Font.Style = [fsBold]
+    ParentFont = False
+  end
+  object imgDecode: TImage
+    Left = 11
+    Height = 200
+    Top = 68
+    Width = 200
+    Proportional = True
+    Stretch = True
+  end
+  object memDecoded: TMemo
+    Left = 227
+    Height = 200
+    Top = 68
+    Width = 306
+    Anchors = [akTop, akLeft, akRight]
+    ReadOnly = True
+    ScrollBars = ssVertical
+    TabOrder = 2
+  end
+  object lblDecodeStatus: TLabel
+    Left = 11
+    Height = 30
+    Top = 276
+    Width = 522
+    Anchors = [akTop, akLeft, akRight]
+    AutoSize = False
+    WordWrap = True
+  end
+  object btnCopy: TButton
+    Left = 11
+    Height = 28
+    Top = 320
+    Width = 130
+    Caption = 'Copy to Clipboard'
+    TabOrder = 3
+  end
+  object btnUse: TButton
+    Left = 150
+    Height = 28
+    Top = 320
+    Width = 130
+    Caption = 'Use in Generator'
+    ModalResult = 1
+    TabOrder = 4
+  end
+  object btnClose: TButton
+    Left = 437
+    Height = 28
+    Top = 320
+    Width = 96
+    Anchors = [akTop, akRight]
+    Cancel = True
+    Caption = 'Close'
+    ModalResult = 9
+    TabOrder = 5
+  end
+  object dlgOpenImage: TOpenDialog
+    Left = 300
+    Top = 16
+    Filter = 'All supported images (*.png;*.bmp;*.jpg;*.jpeg)|*.png;*.bmp;*.jpg;*.jpeg|PNG image (*.png)|*.png|Windows bitmap (*.bmp)|*.bmp|JPEG image (*.jpg;*.jpeg)|*.jpg;*.jpeg|All files (*.*)|*.*'
+    Options = [ofFileMustExist]
+  end
+end

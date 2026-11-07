@@ -21,6 +21,7 @@ type
     lblTextHintText: TLabel;
     lblQr: TLabel;
     lblDownload: TLabel;
+    btnDecode: TButton;
     Panel1: TPanel;
     pnlPreview: TScrollBox;
     imgPreview: TImage;
@@ -66,6 +67,9 @@ type
     procedure ControlChanged(Sender: TObject);
     procedure DownloadClick(Sender: TObject);
     procedure TextHintClick(Sender: TObject);
+    procedure DecodeClick(Sender: TObject);
+    procedure ShowDecodeDialog(const AFileName: String = '');
+    procedure FormDropFiles(Sender: TObject; const FileNames: array of string);
     function SelectedEcc: TQrCode.TEcc;
     function BoostedEcc(AVersion: Int32): TQrCode.TEcc;
     function CaptionLineWidthPix(ACanvas: TCanvas;
@@ -90,6 +94,9 @@ var
 implementation
 
 {$R *.lfm}
+
+uses
+  DecodeForm;
 
 function EccLetter(AEcc: TQrCode.TEcc): String;
 begin
@@ -133,6 +140,8 @@ begin
   chkCaption.OnClick := @ControlChanged;
   lblDownload.OnClick := @DownloadClick;
   lblTextHint.OnClick := @TextHintClick;
+  btnDecode.OnClick := @DecodeClick;
+  OnDropFiles := @FormDropFiles;
   UpdateQrCode;
 end;
 
@@ -631,6 +640,34 @@ end;
 procedure TForm1.ClearPreview;
 begin
   imgPreview.Picture.Bitmap.SetSize(0, 0);
+end;
+
+procedure TForm1.DecodeClick(Sender: TObject);
+begin
+  ShowDecodeDialog;
+end;
+
+procedure TForm1.ShowDecodeDialog(const AFileName: String);
+var
+  Dialog: TDecodeForm;
+begin
+  Dialog := TDecodeForm.Create(nil);
+  try
+    if AFileName <> '' then
+      Dialog.LoadAndDecode(AFileName);
+    if Dialog.ShowModal = mrOK then
+      memText.Text := Dialog.DecodedText;
+  finally
+    Dialog.Free;
+  end;
+end;
+
+procedure TForm1.FormDropFiles(Sender: TObject; const FileNames: array of string);
+begin
+  // the main form is disabled while the modal decode dialog is open
+  if (not Enabled) or (Length(FileNames) = 0) then
+    Exit;
+  ShowDecodeDialog(FileNames[0]);
 end;
 
 end.

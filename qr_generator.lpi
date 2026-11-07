@@ -25,7 +25,7 @@
           </Target>
           <SearchPaths>
             <IncludeFiles Value="$(ProjOutDir)"/>
-            <OtherUnitFiles Value="QRCodeGenLib4Pascal\QRCodeGenLib\src\Interfaces;QRCodeGenLib4Pascal\QRCodeGenLib\src\QRCodeGen;QRCodeGenLib4Pascal\QRCodeGenLib\src\Utils"/>
+            <OtherUnitFiles Value="QRCodeGenLib4Pascal\QRCodeGenLib\src\Interfaces;QRCodeGenLib4Pascal\QRCodeGenLib\src\QRCodeGen;QRCodeGenLib4Pascal\QRCodeGenLib\src\Utils;ZXing\Classes;ZXing\Classes\1D Barcodes;ZXing\Classes\2D Barcodes;ZXing\Classes\2D Barcodes\Decoder;ZXing\Classes\2D Barcodes\Detector;ZXing\Classes\Common;ZXing\Classes\Common\Detector;ZXing\Classes\Common\ReedSolomon;ZXing\Classes\Filtering"/>
             <UnitOutputDirectory Value="lib\$(TargetCPU)-$(TargetOS)"/>
           </SearchPaths>
           <CodeGeneration>
@@ -73,6 +73,14 @@
         <ResourceBaseClass Value="Form"/>
         <UnitName Value="Unit1"/>
       </Unit>
+      <Unit>
+        <Filename Value="decodeform.pas"/>
+        <IsPartOfProject Value="True"/>
+        <ComponentName Value="DecodeForm"/>
+        <HasResources Value="True"/>
+        <ResourceBaseClass Value="Form"/>
+        <UnitName Value="DecodeForm"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>
@@ -83,7 +91,7 @@
     </Target>
     <SearchPaths>
       <IncludeFiles Value="$(ProjOutDir)"/>
-      <OtherUnitFiles Value="QRCodeGenLib4Pascal\QRCodeGenLib\src\Interfaces;QRCodeGenLib4Pascal\QRCodeGenLib\src\QRCodeGen;QRCodeGenLib4Pascal\QRCodeGenLib\src\Utils"/>
+      <OtherUnitFiles Value="QRCodeGenLib4Pascal\QRCodeGenLib\src\Interfaces;QRCodeGenLib4Pascal\QRCodeGenLib\src\QRCodeGen;QRCodeGenLib4Pascal\QRCodeGenLib\src\Utils;ZXing\Classes;ZXing\Classes\1D Barcodes;ZXing\Classes\2D Barcodes;ZXing\Classes\2D Barcodes\Decoder;ZXing\Classes\2D Barcodes\Detector;ZXing\Classes\Common;ZXing\Classes\Common\Detector;ZXing\Classes\Common\ReedSolomon;ZXing\Classes\Filtering"/>
       <UnitOutputDirectory Value="lib\$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
     <Linking>

@@ -3,6 +3,7 @@ object Form1: TForm1
   Height = 742
   Top = 67
   Width = 575
+  AllowDropFiles = True
   Caption = 'QR Code Generator'
   ClientHeight = 742
   ClientWidth = 575
@@ -68,6 +69,14 @@ object Form1: TForm1
     Font.Color = clHighlight
     Font.Style = [fsUnderline]
     ParentFont = False
+  end
+  object btnDecode: TButton
+    Left = 8
+    Height = 24
+    Top = 178
+    Width = 80
+    Caption = 'Decode QR…'
+    TabOrder = 4
   end
   object pnlPreview: TScrollBox
     Left = 96
