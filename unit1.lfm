@@ -348,10 +348,25 @@ object Form1: TForm1
       Caption = 'Increase ECC level within same version'
       TabOrder = 7
     end
+    object lblCaption: TLabel
+      Left = 0
+      Height = 25
+      Top = 392
+      Width = 75
+      Caption = 'Caption:'
+    end
+    object chkCaption: TCheckBox
+      Left = 197
+      Height = 29
+      Top = 388
+      Width = 326
+      Caption = 'Show the encoded text below the code'
+      TabOrder = 8
+    end
     object lblStats: TLabel
       Left = 0
       Height = 25
-      Top = 383
+      Top = 431
       Width = 81
       Caption = 'Statistics:'
       Font.Style = [fsBold]
@@ -360,7 +375,7 @@ object Form1: TForm1
     object lblStatistics: TLabel
       Left = 193
       Height = 1
-      Top = 383
+      Top = 431
       Width = 555
       Anchors = [akTop, akLeft, akRight]
       WordWrap = True

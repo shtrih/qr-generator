@@ -6,10 +6,14 @@ interface
 
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, StdCtrls, ExtCtrls,
-  Spin, QlpIQrCode, QlpIQrSegment, QlpQrCode, QlpQrSegment, QlpQrSegmentMode,
-  QlpQRCodeGenLibTypes;
+  Spin, Math, QlpIQrCode, QlpIQrSegment, QlpQrCode, QlpQrSegment,
+  QlpQrSegmentMode, QlpQRCodeGenLibTypes;
 
 type
+
+  { Caption line list returned by TForm1.WrapCaptionLines }
+
+  TCaptionLines = array of String;
 
   { TForm1 }
 
@@ -54,6 +58,8 @@ type
     lblMaskHint: TLabel;
     lblBoost: TLabel;
     chkBoost: TCheckBox;
+    lblCaption: TLabel;
+    chkCaption: TCheckBox;
     lblStats: TLabel;
     lblStatistics: TLabel;
     dlgColor: TColorDialog;
@@ -66,6 +72,9 @@ type
     procedure TextHintClick(Sender: TObject);
     function SelectedEcc: TQrCode.TEcc;
     function BoostedEcc(AVersion: Int32): TQrCode.TEcc;
+    function WrapCaptionLines(ACanvas: TCanvas; const AText: String;
+      AMaxWidth, AMaxLines: Integer): TCaptionLines;
+    procedure ComposeCaption(ASource, ADest: TBitmap);
     procedure UpdateQrCode;
     procedure ShowError(const AMessage: String);
     procedure ClearPreview;
@@ -117,6 +126,7 @@ begin
   cbLight.OnColorChanged := @ControlChanged;
   cbDark.OnColorChanged := @ControlChanged;
   chkBoost.OnClick := @ControlChanged;
+  chkCaption.OnClick := @ControlChanged;
   lblDownload.OnClick := @DownloadClick;
   lblTextHint.OnClick := @TextHintClick;
   UpdateQrCode;
@@ -167,6 +177,159 @@ begin
   end;
 end;
 
+function TForm1.WrapCaptionLines(ACanvas: TCanvas; const AText: String;
+  AMaxWidth, AMaxLines: Integer): TCaptionLines;
+
+  // removes the last UTF-8 character (dropping the last byte alone could
+  // cut a multi-byte sequence in half and leave an invalid string)
+  procedure DeleteLastChar(var S: String);
+  begin
+    if S = '' then
+      Exit;
+    Delete(S, Length(S), 1);
+    while (S <> '') and ((Byte(S[Length(S)]) and $C0) = $80) do
+      Delete(S, Length(S), 1);
+  end;
+
+var
+  LWords: TCaptionLines;
+  LWordCount, I: Integer;
+  LWord, LLine, LTest: String;
+begin
+  Result := nil;
+  LWords := nil;
+
+  // split the (already flattened) text into space-separated words
+  LWordCount := 0;
+  LWord := '';
+  for I := 1 to Length(AText) do
+    if AText[I] <> ' ' then
+      LWord := LWord + AText[I]
+    else if LWord <> '' then
+    begin
+      Inc(LWordCount);
+      SetLength(LWords, LWordCount);
+      LWords[LWordCount - 1] := LWord;
+      LWord := '';
+    end;
+  if LWord <> '' then
+  begin
+    Inc(LWordCount);
+    SetLength(LWords, LWordCount);
+    LWords[LWordCount - 1] := LWord;
+  end;
+  if LWordCount = 0 then
+    Exit;
+
+  // greedy wrap; the last allowed line is finished off with an ellipsis
+  LLine := '';
+  I := 0;
+  while I < LWordCount do
+  begin
+    if LLine = '' then
+      LTest := LWords[I]
+    else
+      LTest := LLine + ' ' + LWords[I];
+    if ACanvas.TextWidth(LTest) <= AMaxWidth then
+    begin
+      LLine := LTest;
+      Inc(I);
+      Continue;
+    end;
+    if LLine <> '' then
+    begin
+      // flushing would consume the last available line: ellipsize it
+      if Length(Result) = AMaxLines - 1 then
+      begin
+        while (LLine <> '') and
+          (ACanvas.TextWidth(LLine + '…') > AMaxWidth) do
+          DeleteLastChar(LLine);
+        SetLength(Result, Length(Result) + 1);
+        Result[High(Result)] := LLine + '…';
+        Exit;
+      end;
+      SetLength(Result, Length(Result) + 1);
+      Result[High(Result)] := LLine;
+      LLine := '';
+      Continue;
+    end;
+    // a single word wider than a whole line: break it by characters
+    if Length(Result) = AMaxLines - 1 then
+    begin
+      while (LWords[I] <> '') and
+        (ACanvas.TextWidth(LWords[I] + '…') > AMaxWidth) do
+        DeleteLastChar(LWords[I]);
+      SetLength(Result, Length(Result) + 1);
+      Result[High(Result)] := LWords[I] + '…';
+      Exit;
+    end;
+    LWord := LWords[I];
+    while (LWord <> '') and (ACanvas.TextWidth(LWord) > AMaxWidth) do
+      DeleteLastChar(LWord);
+    SetLength(Result, Length(Result) + 1);
+    Result[High(Result)] := LWord;
+    LWords[I] := Copy(LWords[I], Length(LWord) + 1, MaxInt);
+    // the remainder of the word is reprocessed on the next iteration
+  end;
+  if LLine <> '' then
+  begin
+    SetLength(Result, Length(Result) + 1);
+    Result[High(Result)] := LLine;
+  end;
+end;
+
+procedure TForm1.ComposeCaption(ASource, ADest: TBitmap);
+const
+  // caption font height in bitmap pixels: grows with the scale, capped
+  cCaptionFontMinPx = 8;
+  cCaptionFontMaxPx = 48;
+  cCaptionMaxLines = 3;
+var
+  LFontH, LPad, LLineH, LBandH, LMaxTextW, I, LY: Integer;
+  LText: String;
+  LLines: TCaptionLines;
+begin
+  // flatten the encoded text into a single line for the caption
+  LText := StringReplace(memText.Text, #13#10, ' ', [rfReplaceAll]);
+  LText := StringReplace(LText, #10, ' ', [rfReplaceAll]);
+  LText := StringReplace(LText, #13, ' ', [rfReplaceAll]);
+  LText := Trim(LText);
+
+  LFontH := Min(Max(seScale.Value * 2, cCaptionFontMinPx), cCaptionFontMaxPx);
+  LPad := Max(4, seScale.Value div 2);
+  LMaxTextW := ASource.Width - 2 * LPad;
+  if LMaxTextW < 8 then
+    LMaxTextW := 8;
+
+  ASource.Canvas.Font.Height := -LFontH;
+  LLines := WrapCaptionLines(ASource.Canvas, LText, LMaxTextW,
+    cCaptionMaxLines);
+  if Length(LLines) = 0 then
+  begin
+    ADest.Assign(ASource);
+    Exit;
+  end;
+
+  LLineH := LFontH * 5 div 4;
+  LBandH := 2 * LPad + Length(LLines) * LLineH;
+
+  ADest.SetSize(ASource.Width, ASource.Height + LBandH);
+  ADest.Canvas.Brush.Color := cbLight.ButtonColor;
+  ADest.Canvas.FillRect(0, 0, ADest.Width, ADest.Height);
+  ADest.Canvas.Draw(0, 0, ASource);
+
+  ADest.Canvas.Font.Height := -LFontH;
+  ADest.Canvas.Font.Color := cbDark.ButtonColor;
+  ADest.Canvas.Brush.Style := bsClear;
+  LY := ASource.Height + LPad + (LLineH - LFontH) div 2;
+  for I := 0 to High(LLines) do
+  begin
+    ADest.Canvas.TextOut(
+      (ADest.Width - ADest.Canvas.TextWidth(LLines[I])) div 2, LY, LLines[I]);
+    Inc(LY, LLineH);
+  end;
+end;
+
 procedure TForm1.UpdateQrCode;
 var
   LLightColor, LDarkColor: TColor;
@@ -201,7 +364,10 @@ begin
   try
     LBitmap := LQRCode.ToBitmapImage(seScale.Value, seBorder.Value);
     try
-      imgPreview.Picture.Bitmap.Assign(LBitmap);
+      if chkCaption.Checked and (memText.Text <> '') then
+        ComposeCaption(LBitmap, imgPreview.Picture.Bitmap)
+      else
+        imgPreview.Picture.Bitmap.Assign(LBitmap);
     finally
       LBitmap.Free;
     end;
